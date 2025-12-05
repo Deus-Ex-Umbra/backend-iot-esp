@@ -9,6 +9,7 @@ import { GeminiServicio } from './gemini.servicio';
 @Injectable()
 export class SensorServicio {
   private ultimaHoraAlerta: number = 0;
+  private cacheRespuestaGemini: string = "Sistema IoT escuchando..."; // Mensaje por defecto
 
   constructor(
     @InjectRepository(LecturaSensor)
@@ -20,25 +21,33 @@ export class SensorServicio {
   async crear(dto: CrearLecturaDto) {
     const lectura = this.sensorRepo.create(dto);
 
-    // 1. Consultar a Gemini (Modelo Flash es rápido, esperamos la respuesta)
-    try {
-      const analisis = await this.geminiServicio.analizarEstado({
-        t: dto.temperatura,
-        g: dto.nivel_gas,
-        h: dto.humedad,
-        a: dto.estado_alerta
-      });
-      lectura.respuesta_gemini = analisis;
-    } catch (e) {
-      lectura.respuesta_gemini = "Error IA";
+    // --- LOGICA BAJO DEMANDA ---
+    // Solo consultamos si el Arduino envía la bandera explícita 'consultar_ia'
+    if (dto.consultar_ia === true) {
+      console.log("\x1b[33m%s\x1b[0m", "⚡ Petición manual recibida. Consultando Gemini...");
+      
+      try {
+        const analisis = await this.geminiServicio.analizarEstado({
+          temp: dto.temperatura,
+          gas: dto.nivel_gas,
+          alerta: dto.estado_alerta
+        });
+        
+        this.cacheRespuestaGemini = analisis; // Actualizamos memoria
+        
+      } catch (e) {
+        console.error("Error IA, manteniendo mensaje anterior.");
+      }
     }
 
-    // 2. Gestionar Alertas SMS (Twilio)
+    // Siempre devolvemos algo en el campo respuesta_gemini para que el Arduino lo muestre
+    lectura.respuesta_gemini = this.cacheRespuestaGemini;
+
+    // --- ALERTAS CRÍTICAS SMS (Independiente de la IA) ---
     if (dto.estado_alerta !== EstadoAlerta.NORMAL) {
-      this.manejarAlerta(dto); // No usamos await para no bloquear
+      this.manejarAlerta(dto);
     }
 
-    // 3. Guardar y devolver (Esto envía el JSON de vuelta al Arduino)
     return await this.sensorRepo.save(lectura);
   }
 
@@ -47,7 +56,7 @@ export class SensorServicio {
     const unMinuto = 60 * 1000;
     if (ahora - this.ultimaHoraAlerta > unMinuto) {
       const mensaje = `ALERTA ${dto.estado_alerta}: Gas ${dto.nivel_gas}, Temp ${dto.temperatura}.`;
-      await this.twilioServicio.enviarAlerta(mensaje);
+      this.twilioServicio.enviarAlerta(mensaje).catch(e => console.error("Error Twilio", e));
       this.ultimaHoraAlerta = ahora;
     }
   }

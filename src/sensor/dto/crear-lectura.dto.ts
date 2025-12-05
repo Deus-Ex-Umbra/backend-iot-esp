@@ -20,4 +20,8 @@ export class CrearLecturaDto {
   @IsString()
   @IsOptional()
   musica_sonando?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  consultar_ia?: boolean;
 }
