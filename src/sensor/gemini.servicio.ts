@@ -5,7 +5,7 @@ import axios from 'axios';
 @Injectable()
 export class GeminiServicio {
   private apiKey: string;
-  private readonly API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
+  private readonly API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
   constructor(private configService: ConfigService) {
     this.apiKey = this.configService.getOrThrow<string>('GEMINI_API_KEY');
