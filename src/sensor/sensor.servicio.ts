@@ -19,10 +19,26 @@ export class SensorServicio {
 
   async crear(dto: CrearLecturaDto) {
     const lectura = this.sensorRepo.create(dto);
-    if (dto.estado_alerta !== EstadoAlerta.NORMAL) {
-      await this.manejarAlerta(dto);
+
+    // 1. Consultar a Gemini (Modelo Flash es rápido, esperamos la respuesta)
+    try {
+      const analisis = await this.geminiServicio.analizarEstado({
+        t: dto.temperatura,
+        g: dto.nivel_gas,
+        h: dto.humedad,
+        a: dto.estado_alerta
+      });
+      lectura.respuesta_gemini = analisis;
+    } catch (e) {
+      lectura.respuesta_gemini = "Error IA";
     }
 
+    // 2. Gestionar Alertas SMS (Twilio)
+    if (dto.estado_alerta !== EstadoAlerta.NORMAL) {
+      this.manejarAlerta(dto); // No usamos await para no bloquear
+    }
+
+    // 3. Guardar y devolver (Esto envía el JSON de vuelta al Arduino)
     return await this.sensorRepo.save(lectura);
   }
 
@@ -30,26 +46,10 @@ export class SensorServicio {
     const ahora = Date.now();
     const unMinuto = 60 * 1000;
     if (ahora - this.ultimaHoraAlerta > unMinuto) {
-      const mensaje = `ALERTA ${dto.estado_alerta}: Gas: ${dto.nivel_gas}, Temp: ${dto.temperatura}°C. Se detectó presencia: ${dto.presencia ? 'SÍ' : 'NO'}`;
+      const mensaje = `ALERTA ${dto.estado_alerta}: Gas ${dto.nivel_gas}, Temp ${dto.temperatura}.`;
       await this.twilioServicio.enviarAlerta(mensaje);
       this.ultimaHoraAlerta = ahora;
     }
-  }
-
-  async obtenerUltimoYAnalizar() {
-    const ultimo = await this.sensorRepo.findOne({
-      order: { fecha: 'DESC' },
-    });
-
-    if (!ultimo) return { mensaje: 'No hay datos registrados aún.' };
-
-    const analisis = await this.geminiServicio.analizarEstado({
-      gas: ultimo.nivel_gas,
-      temp: ultimo.temperatura,
-      alerta: ultimo.estado_alerta
-    });
-
-    return { ultimo_dato: ultimo, analisis_ia: analisis };
   }
 
   async encontrarTodos() {
@@ -57,5 +57,10 @@ export class SensorServicio {
       order: { fecha: 'DESC' },
       take: 50,
     });
+  }
+
+  async obtenerUltimoYAnalizar() {
+    const ultimo = await this.sensorRepo.findOne({ order: { fecha: 'DESC' } });
+    return ultimo || { mensaje: 'Sin datos' };
   }
 }
